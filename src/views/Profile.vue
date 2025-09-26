@@ -55,7 +55,7 @@
 <script setup>
 import { ref } from 'vue'
 
-// 读取持久化数据
+// 1. 读取本地缓存（没有就用默认值）
 const name    = ref(localStorage.getItem('profile_name')    || '云松')
 const qq      = ref(localStorage.getItem('profile_qq')      || '2944661085')
 const email   = ref(localStorage.getItem('profile_email')   || '2944661085@qq.com')
@@ -63,9 +63,10 @@ const address = ref(localStorage.getItem('profile_address') || '湖北省武汉�
 
 const editing = ref(false)
 const showTip = ref(false)
-const draft   = ref({}) // 编辑临时副本
+const draft   = ref({})          // 临时编辑副本
 
-function startEdit () {
+// 2. 进入编辑模式
+function startEdit() {
   draft.value = {
     name: name.value,
     qq: qq.value,
@@ -75,23 +76,28 @@ function startEdit () {
   editing.value = true
 }
 
-function save () {
-  // 落库
-  Object.keys(draft.value).forEach(k => {
-    localStorage.setItem(`profile_${k}`, draft.value[k])
-    ref[k].value = draft.value[k]   // 同步回显
-  })
-  name.value = draft.value.name
-  qq.value = draft.value.qq
-  email.value = draft.value.email
+// 3. 保存：落库 + 回显 + 退出编辑
+function save() {
+  // 3.1 写入 localStorage
+  localStorage.setItem('profile_name',    draft.value.name)
+  localStorage.setItem('profile_qq',      draft.value.qq)
+  localStorage.setItem('profile_email',   draft.value.email)
+  localStorage.setItem('profile_address', draft.value.address)
+
+  // 3.2 回写到响应式引用 → 界面立即更新
+  name.value    = draft.value.name
+  qq.value      = draft.value.qq
+  email.value   = draft.value.email
   address.value = draft.value.address
 
+  // 3.3 退出编辑 & 提示
   editing.value = false
   showTip.value = true
   setTimeout(() => (showTip.value = false), 1500)
 }
 
-function cancel () {
+// 4. 取消编辑
+function cancel() {
   editing.value = false
 }
 </script>
