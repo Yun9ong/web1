@@ -6,12 +6,15 @@
     <!-- 左上角返回 -->
     <router-link to="/profile" class="back-btn">← 返回上一页</router-link>
 
-    <!-- 顶部工具栏 -->
+    <!-- 顶部操作栏 -->
     <div class="top-bar">
       <label class="bar-btn add">
         <input type="file" accept="image/*" multiple @change="addPhotos" hidden />
         新增照片
       </label>
+      <button class="bar-btn" :class="{ danger: delMode }" @click="delMode = !delMode">
+        {{ delMode ? '退出删除' : '删除照片' }}
+      </button>
       <button class="bar-btn refresh" @click="refreshGallery">刷新</button>
     </div>
 
@@ -21,21 +24,22 @@
         v-for="(src, idx) in galleryList"
         :key="src"
         class="cell"
-        @click="showSingle(src)"
+        :class="{ active: delMode && selected.has(idx) }"
+        @click="delMode ? toggleSelect(idx) : showSingle(src)"
       >
         <img :src="src" class="cell-img" loading="lazy" />
-        <div class="del-overlay" @click.stop="removePhoto(idx)">
-          <span>删除</span>
-        </div>
+        <transition name="fade">
+          <div v-if="delMode" class="del-badge" @click.stop="removePhoto(idx)">✕</div>
+        </transition>
       </div>
     </div>
 
     <!-- 单张放大 -->
-    <Transition name="fade">
+    <transition name="fade">
       <div v-if="single" class="single-mask" @click="single = ''">
         <img :src="single" class="single-img" />
       </div>
-    </Transition>
+    </transition>
   </div>
 </template>
 
@@ -44,70 +48,64 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
-const galleryList = ref([])   // 最终展示列表
-const single = ref('')        // 放大图地址
+const galleryList = ref([])
+const single = ref('')
+const delMode = ref(false)
+const selected = ref(new Set())          // 删除模式下已选索引
 
-/* ===== 扫描 gallery 目录 ===== */
-// Vite 只能显式 import.meta.glob，这里用正则一次性拿到 public/gallery/ 下所有图片
+/* ===== 初始扫描 ===== */
 const modules = import.meta.glob('/public/gallery/*.{jpg,jpeg,png,gif,webp}')
-const DEFAULT = Object.keys(modules).map(p => p.replace('/public', '')) // 去掉 /public 前缀
+const DEFAULT = Object.keys(modules).map(p => p.replace('/public', ''))
 
-/* ===== 初始化 ===== */
 onMounted(() => {
   const saved = localStorage.getItem('gallery_list')
   galleryList.value = saved ? JSON.parse(saved) : DEFAULT
 })
 
-/* ===== 增 / 删 / 刷新 ===== */
-// 1. 本地选图上传
-async function addPhotos(e) {
+/* ===== 新增 ===== */
+function addPhotos(e) {
   const files = Array.from(e.target.files)
-  for (const file of files) {
-    // 简单重命名：时间戳 + 原后缀
-    const name = `${Date.now()}-${file.name}`.replace(/\s/g, '-')
-    const url = `/gallery/${name}`
-
-    // 真正上传：这里演示用 base64 写 localStorage（小图够用）
-    // 生产环境建议调用后端或 Vercel blob
-    const reader = new FileReader()
-    reader.readAsDataURL(file)
-    reader.onload = () => {
-      localStorage.setItem(name, reader.result) // 存 base64
-      galleryList.value.push(url)
-      saveList()
-    }
-  }
+  files.forEach(file => {
+    const url = URL.createObjectURL(file)   // 内存 URL，立即显示
+    galleryList.value.push(url)
+  })
+  saveList()
+  e.target.value = ''                       // 允许重复选同一张
 }
 
-// 2. 删除
+/* ===== 删除 ===== */
+function toggleSelect(idx) {
+  selected.value.has(idx) ? selected.value.delete(idx) : selected.value.add(idx)
+}
 function removePhoto(idx) {
   if (galleryList.value.length <= 1) return alert('至少保留一张图片')
-  const target = galleryList.value[idx]
-  localStorage.removeItem(target.split('/').pop()) // 同时删 base64
   galleryList.value.splice(idx, 1)
+  selected.value.delete(idx)
   saveList()
 }
 
-// 3. 刷新（重新扫描 + 同步本地缓存）
+/* ===== 刷新 ===== */
 function refreshGallery() {
   const saved = localStorage.getItem('gallery_list')
   galleryList.value = saved ? JSON.parse(saved) : DEFAULT
+  selected.value.clear()
   saveList()
 }
 
-// 持久化
+/* ===== 持久化 ===== */
 function saveList() {
+  // 仅保存路径；本地新增的图片为 blob: 地址，刷新会丢失，生产环境请对接后端
   localStorage.setItem('gallery_list', JSON.stringify(galleryList.value))
 }
 
-/* 单张放大 */
+/* ===== 放大 ===== */
 function showSingle(src) {
   single.value = src
 }
 </script>
 
 <style scoped>
-/* ===== 全屏背景 ===== */
+/* ---------- 基础布局 ---------- */
 .photo-page {
   position: relative;
   width: 100%;
@@ -147,19 +145,18 @@ function showSingle(src) {
   transform: translateY(-2px);
 }
 
-/* ===== 顶部工具栏 ===== */
+/* ---------- 顶部栏 ---------- */
 .top-bar {
   position: relative;
   z-index: 3;
   display: flex;
-  gap: 1rem;
-  margin-bottom: 2rem;
+  gap: 0.8rem;
+  margin-bottom: 1.5rem;
 }
 .bar-btn {
   padding: 0.6rem 1.4rem;
   font-size: 1rem;
   color: #fff;
-  text-decoration: none;
   border-radius: 30px;
   background: rgba(255, 255, 255, 0.15);
   backdrop-filter: blur(10px);
@@ -167,35 +164,43 @@ function showSingle(src) {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
   transition: all 0.3s ease;
   cursor: pointer;
-  border: none;
 }
 .bar-btn:hover {
   background: rgba(255, 255, 255, 0.25);
   transform: translateY(-2px);
 }
+.bar-btn.danger {
+  background: rgba(244, 67, 54, 0.25);
+  border-color: rgba(244, 67, 54, 0.4);
+}
+.bar-btn.danger:hover {
+  background: rgba(244, 67, 54, 0.4);
+}
 
-/* ===== 网格：固定宽度 + 自适应列数 ===== */
+/* ---------- 网格 ---------- */
 .grid {
   position: relative;
   z-index: 3;
   width: 90%;
   max-width: 1200px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 1rem;
 }
 .cell {
   position: relative;
   aspect-ratio: 1 / 1;
-  background: rgba(255, 255, 255, 0.05);
+  background: #fff;
   border-radius: 12px;
   overflow: hidden;
   cursor: zoom-in;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   transition: transform 0.3s ease, box-shadow 0.3s ease;
+  border: 4px solid transparent;
 }
 .cell:hover {
   transform: scale(1.03);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 .cell-img {
   width: 100%;
@@ -203,31 +208,34 @@ function showSingle(src) {
   object-fit: cover;
   display: block;
 }
+.cell.active {
+  border-color: #f44336;
+}
 
-/* 删除遮罩 */
-.del-overlay {
+/* ---------- 删除角标 ---------- */
+.del-badge {
   position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #f44336;
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-.cell:hover .del-overlay {
-  opacity: 1;
+  font-size: 16px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
-/* 单张放大 */
+/* ---------- 单张放大 ---------- */
 .single-mask {
   position: fixed;
   inset: 0;
   z-index: 20;
-  background: rgba(0, 0, 0, 0.85);
+   background: rgba(0,0,0,.85);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -238,27 +246,28 @@ function showSingle(src) {
   max-height: 90vh;
   object-fit: contain;
   border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.6);
 }
 
-/* 动画 */
+/* ---------- 动画 ---------- */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.3s;
+  transition: opacity .3s;
 }
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
 }
 
-/* 手机适配 */
+/* ---------- 移动端 ---------- */
 @media (max-width: 600px) {
   .grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 0.6rem;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: .6rem;
   }
   .bar-btn {
-    font-size: 0.9rem;
-    padding: 0.5rem 1rem;
+    font-size: .9rem;
+    padding: .5rem 1rem;
   }
 }
 </style>
