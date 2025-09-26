@@ -1,28 +1,20 @@
-<!-- src/App.vue -->
 <template>
-  <div id="app">
-    <Home />
-  </div>
+  <router-view />
+  
 </template>
 
-<script>
-import Home from './views/Home.vue'
-
-export default {
-  name: 'App',
-  components: {
-    Home
-  }
-}
+<script setup>
+/* 根组件仅做路由出口 */
 </script>
 
 <style>
+/* 全局 reset */
+* {
+  box-sizing: border-box;
+}
 #app {
-  font-family: Avenir, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  text-align: center;
-  color: #2c3e50;
-  margin-top: 60px;
 }
 </style>
