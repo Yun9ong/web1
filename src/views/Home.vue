@@ -73,14 +73,14 @@ async function copyConfig() {
 </script>
 
 <style scoped>
-/* ---------- 背景图 ---------- */
+/*背景图*/
 .bg {
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  background-image: url('./back01.png');
+background-image: url('/gallery/back01.png');
   background-size: cover;
   background-position: center;
   z-index: 1;
