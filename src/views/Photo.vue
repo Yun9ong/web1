@@ -1,10 +1,12 @@
 <template>
-  <div class="photo-page">
-    <!-- 背景图 -->
-    <img class="bg" src="/back03.jpg" loading="lazy" alt="bg" />
+  <div class="photo-page" @pointermove="onPointerMove">
+    <!-- 动态背景 -->
+    <canvas ref="canvas" class="bg-canvas"></canvas>
 
     <!-- 左上角返回 -->
-    <router-link to="/profile" class="back-btn">← 返回上一页</router-link>
+    <router-link to="/profile" class="back-btn">
+      <span>← 返回上一页</span>
+    </router-link>
 
     <!-- 顶部操作栏 -->
     <div class="top-bar">
@@ -24,18 +26,21 @@
         v-for="(src, idx) in galleryList"
         :key="src"
         class="cell"
-        :class="{ active: delMode && selected.has(idx) }"
+        :class="{ active: delMode && selected.has(idx), 'tilt-in': true }"
+        v-lazy="src"
         @click="delMode ? toggleSelect(idx) : showSingle(src)"
       >
-        <img :src="src" class="cell-img" loading="lazy" />
-        <transition name="fade">
+        <img :data-src="src" class="cell-img" loading="lazy" decoding="async" />
+        <transition name="pop">
           <div v-if="delMode" class="del-badge" @click.stop="removePhoto(idx)">✕</div>
         </transition>
       </div>
+      <!-- 虚拟滚动占位 -->
+      <div class="phantom" :style="{ height: phantomHeight + 'px' }"></div>
     </div>
 
     <!-- 单张放大 -->
-    <transition name="fade">
+    <transition name="zoom">
       <div v-if="single" class="single-mask" @click="single = ''">
         <img :src="single" class="single-img" />
       </div>
@@ -44,36 +49,105 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+/* ========== 基础引入 ========== */
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 
+/* ========== 响应式数据 ========== */
 const router = useRouter()
 const galleryList = ref([])
 const single = ref('')
 const delMode = ref(false)
-const selected = ref(new Set())          // 删除模式下已选索引
+const selected = ref(new Set())
+const grid = ref(null)
+const canvas = ref(null)
 
-/* ===== 初始扫描 ===== */
+/* ========== 粒子背景 ========== */
+let ctx, particles, rafId
+const dpr = window.devicePixelRatio || 1
+function initParticles() {
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  canvas.value.width = vw * dpr
+  canvas.value.height = vh * dpr
+  ctx = canvas.value.getContext('2d')
+  ctx.scale(dpr, dpr)
+
+  particles = Array.from({ length: 60 }, () => ({
+    x: Math.random() * vw,
+    y: Math.random() * vh,
+    r: Math.random() * 1.2 + 0.4,
+    vx: Math.random() * 0.4 + 0.1,
+    vy: Math.random() * 0.4 + 0.1,
+    opacity: Math.random() * 0.6 + 0.2
+  }))
+  runParticles()
+}
+function runParticles() {
+  ctx.clearRect(0, 0, canvas.value.width / dpr, canvas.value.height / dpr)
+  particles.forEach(p => {
+    p.x += p.vx
+    p.y += p.vy
+    if (p.x > window.innerWidth + 5) p.x = -5
+    if (p.y > window.innerHeight + 5) p.y = -5
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(255,255,255,${p.opacity})`
+    ctx.fill()
+  })
+  rafId = requestAnimationFrame(runParticles)
+}
+function stopParticles() {
+  cancelAnimationFrame(rafId)
+}
+
+/* ========== 3D 鼠标倾斜 ========== */
+const mouse = { x: 0, y: 0 }
+function onPointerMove(e) {
+  mouse.x = (e.clientX / window.innerWidth - 0.5) * 20
+  mouse.y = (e.clientY / window.innerHeight - 0.5) * 20
+  document.documentElement.style.setProperty('--mx', mouse.x + 'deg')
+  document.documentElement.style.setProperty('--my', mouse.y + 'deg')
+}
+
+/* ========== 懒加载指令 ========== */
+const vLazy = {
+  mounted(el, binding) {
+    const io = new IntersectionObserver(
+      entries => {
+        if (entries[0].isIntersecting) {
+          const img = el.querySelector('.cell-img')
+          img.src = binding.value
+          io.disconnect()
+        }
+      },
+      { threshold: 0.01 }
+    )
+    io.observe(el)
+  }
+}
+
+/* ========== 初始数据 ========== */
 const modules = import.meta.glob('/public/gallery/*.{jpg,jpeg,png,gif,webp}')
 const DEFAULT = Object.keys(modules).map(p => p.replace('/public', ''))
 
 onMounted(() => {
   const saved = localStorage.getItem('gallery_list')
   galleryList.value = saved ? JSON.parse(saved) : DEFAULT
+  initParticles()
 })
+onUnmounted(() => stopParticles())
 
-/* ===== 新增 ===== */
+/* ========== 业务逻辑 ========== */
 function addPhotos(e) {
   const files = Array.from(e.target.files)
   files.forEach(file => {
-    const url = URL.createObjectURL(file)   // 内存 URL，立即显示
+    const url = URL.createObjectURL(file)
     galleryList.value.push(url)
   })
   saveList()
-  e.target.value = ''                       // 允许重复选同一张
+  e.target.value = ''
 }
-
-/* ===== 删除 ===== */
 function toggleSelect(idx) {
   selected.value.has(idx) ? selected.value.delete(idx) : selected.value.add(idx)
 }
@@ -83,28 +157,33 @@ function removePhoto(idx) {
   selected.value.delete(idx)
   saveList()
 }
-
-/* ===== 刷新 ===== */
 function refreshGallery() {
   const saved = localStorage.getItem('gallery_list')
   galleryList.value = saved ? JSON.parse(saved) : DEFAULT
   selected.value.clear()
-  saveList()
 }
-
-/* ===== 持久化 ===== */
 function saveList() {
-  // 仅保存路径；本地新增的图片为 blob: 地址，刷新会丢失，生产环境请对接后端
   localStorage.setItem('gallery_list', JSON.stringify(galleryList.value))
 }
-
-/* ===== 放大 ===== */
 function showSingle(src) {
   single.value = src
 }
+
+/* ========== 虚拟滚动预留 ========== */
+const phantomHeight = ref(0)
+nextTick(() => {
+  const row = Math.ceil(galleryList.value.length / 6) /* 6 列 */
+  phantomHeight.value = row * (160 + 16) /* 160 卡片高 + 16 gap */
+})
 </script>
 
 <style scoped>
+/* ---------- 变量 ---------- */
+:root {
+  --mx: 0deg;
+  --my: 0deg;
+}
+
 /* ---------- 基础布局 ---------- */
 .photo-page {
   position: relative;
@@ -115,15 +194,18 @@ function showSingle(src) {
   align-items: center;
   padding: 5vh 0;
   overflow: hidden;
+  background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
 }
-.bg {
+.bg-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
   z-index: 1;
+  pointer-events: none;
 }
+
+/* ---------- 返回按钮 ---------- */
 .back-btn {
   position: absolute;
   top: 1.2rem;
@@ -154,6 +236,7 @@ function showSingle(src) {
   margin-bottom: 1.5rem;
 }
 .bar-btn {
+  position: relative;
   padding: 0.6rem 1.4rem;
   font-size: 1rem;
   color: #fff;
@@ -164,6 +247,7 @@ function showSingle(src) {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
   transition: all 0.3s ease;
   cursor: pointer;
+  overflow: hidden;
 }
 .bar-btn:hover {
   background: rgba(255, 255, 255, 0.25);
@@ -175,6 +259,22 @@ function showSingle(src) {
 }
 .bar-btn.danger:hover {
   background: rgba(244, 67, 54, 0.4);
+}
+/* 波纹 */
+.bar-btn::after {
+  content: '';
+  position: absolute;
+  inset: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+  transform: translate(-50%, -50%);
+  transition: width 0.4s, height 0.4s;
+}
+.bar-btn:active::after {
+  width: 300px;
+  height: 300px;
 }
 
 /* ---------- 网格 ---------- */
@@ -195,21 +295,39 @@ function showSingle(src) {
   overflow: hidden;
   cursor: zoom-in;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transform: rotateX(var(--my)) rotateY(var(--mx)) scale(1);
   transition: transform 0.3s ease, box-shadow 0.3s ease;
   border: 4px solid transparent;
 }
 .cell:hover {
-  transform: scale(1.03);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  transform: rotateX(0) rotateY(0) scale(1.05);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
 }
 .cell-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  transition: transform 0.4s;
+}
+.cell:hover .cell-img {
+  transform: scale(1.1);
 }
 .cell.active {
-  border-color: #f44336;
+  animation: pulse 1.2s infinite;
+}
+@keyframes pulse {
+  0% {
+    border-color: #f44336;
+    box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.6);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgba(244, 67, 54, 0);
+  }
+  100% {
+    border-color: #f44336;
+    box-shadow: 0 0 0 0 rgba(244, 67, 54, 0);
+  }
 }
 
 /* ---------- 删除角标 ---------- */
@@ -228,6 +346,19 @@ function showSingle(src) {
   font-size: 16px;
   cursor: pointer;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s;
+}
+.del-badge:hover {
+  transform: scale(1.2) rotate(90deg);
+}
+.pop-enter-active,
+.pop-leave-active {
+  transition: all 0.3s;
+}
+.pop-enter-from,
+.pop-leave-to {
+  transform: scale(0) rotate(-180deg);
+  opacity: 0;
 }
 
 /* ---------- 单张放大 ---------- */
@@ -235,7 +366,8 @@ function showSingle(src) {
   position: fixed;
   inset: 0;
   z-index: 20;
-   background: rgba(0,0,0,.85);
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(12px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -246,28 +378,43 @@ function showSingle(src) {
   max-height: 90vh;
   object-fit: contain;
   border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0,0,0,.6);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  animation: zoomIn 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes zoomIn {
+  from {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.zoom-enter-active,
+.zoom-leave-active {
+  transition: opacity 0.4s;
+}
+.zoom-enter-from,
+.zoom-leave-to {
+  opacity: 0;
 }
 
-/* ---------- 动画 ---------- */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity .3s;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+/* ---------- 虚拟占位 ---------- */
+.phantom {
+  grid-column: 1 / -1;
 }
 
 /* ---------- 移动端 ---------- */
 @media (max-width: 600px) {
   .grid {
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: .6rem;
+    gap: 0.6rem;
   }
   .bar-btn {
-    font-size: .9rem;
-    padding: .5rem 1rem;
+    font-size: 0.9rem;
+    padding: 0.5rem 1rem;
   }
 }
 </style>
